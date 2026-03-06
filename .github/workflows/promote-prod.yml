@@ -1,0 +1,53 @@
+name: Promote to Production
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - deployment
+    paths:
+      - 'envs/stage/values.yaml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: deployment
+
+      - name: Sync prod with stage
+        id: versions
+        run: |
+          cp envs/stage/values.yaml envs/prod/values.yaml
+          # Update the comment to reflect the environment
+          sed -i 's/# envs\/stage\/values.yaml/# envs\/prod\/values.yaml/' envs/prod/values.yaml
+          sed -i 's/# Managed by PR from dev/# Managed by PR from stage/' envs/prod/values.yaml
+          
+          # Extract versions for PR description
+          APP_VER=$(grep "tag:" envs/prod/values.yaml | awk '{print $2}' | tr -d '"')
+          HELM_VER=$(grep "chartVersion:" envs/prod/values.yaml | awk '{print $2}' | tr -d '"')
+          echo "app_ver=$APP_VER" >> $GITHUB_OUTPUT
+          echo "helm_ver=$HELM_VER" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(prod): promote versions"
+          title: "Promote to Production: App ${{ steps.versions.outputs.app_ver }} / Helm ${{ steps.versions.outputs.helm_ver }}"
+          body: |
+            ## Environment Promotion: Stage -> Prod
+            - **App Version:** `${{ steps.versions.outputs.app_ver }}`
+            - **Helm Chart Version:** `${{ steps.versions.outputs.helm_ver }}`
+            
+            This PR was automatically generated upon merging the Staging PR.
+          branch: "promote-stage-to-prod"
+          base: "deployment"
+          delete-branch: true
