@@ -1,4 +1,4 @@
-# Trigger Helm Release v7
+# Scenario 2 update
 image:
   repository: ghcr.io/ps-occrp/ps-demo-all-in-one-branch
   tag: "latest"
