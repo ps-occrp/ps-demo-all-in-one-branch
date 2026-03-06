@@ -1,31 +1,55 @@
-# GitOps Dual-Branch Demo (ps-demo-all-in-one-branch)
+# GitOps All-In-One Dual-Branch Demo (ps-demo-all-in-one-branch)
 
-This repository is a fully automated GitOps demonstration featuring a **Dual-Branch Architecture**. It separates the application source code and Helm templates from the environment-specific deployment states.
-
----
-
-## 🏗️ Architecture
-
-### Branching Strategy
-- **`main` Branch**: 
-  - **Purpose**: Source of truth for Application code and Helm Chart templates.
-  - **Content**: `app/`, `helm/`, CI workflows, and project metadata.
-  - **History**: Focuses on development changes and feature additions.
-- **`deployment` Branch**:
-  - **Purpose**: State of truth for all environments (Dev, Stage, Prod).
-  - **Content**: `envs/` directory containing `values.yaml` for each stage.
-  - **History**: Tracks every version bump and configuration change across environments.
+This repository is a fully automated GitOps demonstration. It manages a Dockerized application, its Helm chart, and environment-specific configurations (Dev, Stage, Prod) across two branches, featuring cascading automated promotion via Pull Requests on the deployment branch.
 
 ---
 
-## 🔄 The Dual-Branch Workflow
+## 🚀 Developer Perspective
+
+As a developer, your primary focus is the `app/` and `helm/` directories on the `main` branch.
+
+### Folder Structure (main branch)
+- **`app/`**: Contains the Nginx-based static application and `Dockerfile`.
+- **`helm/`**: Contains the Kubernetes manifests (Helm chart) for the application.
+
+### Workflow
+1.  **Conventional Commits**: We use [Conventional Commits](https://www.conventionalcommits.org/) to drive automated versioning.
+    - Use `feat(app): ...` or `fix(app): ...` for application changes.
+    - Use `feat(helm): ...` or `fix(helm): ...` for Helm chart changes.
+2.  **Local Testing**:
+    - Build locally: `docker build -t ps-demo-all-in-one-branch ./app`
+    - Lint Helm: `helm lint helm/`
+3.  **Automatic Release**: Once you push to `main`, the CI builds a new image/chart and automatically updates the `dev` environment in the `deployment` branch.
+
+---
+
+## ⚙️ DevOps Perspective
+
+The operational core of this repo relies on GitHub Actions and a dual-branch strategy to isolate environment state from source code.
+
+### Automation Components
+- **Versioning**: Two independent `semantic-release` instances manage versions for the App and the Helm Chart separately on the `main` branch.
+- **OCI Registry**: Artifacts are pushed to `ghcr.io`.
+- **GitOps Values**: Environment states are stored in the `envs/` directory, which exists **only** on the `deployment` branch.
+
+### Workflow Logic
+1.  **Job: `release-app` / `release-helm`**: Detects changes in `main` and publishes new versions to GHCR.
+2.  **Job: `deploy-dev-and-promote-stage`**: 
+    - **Safety Gate**: This job only executes if the respective build jobs were successful. If a build fails, no environments are updated.
+    - **Cross-Branch Sync**: Checkouts the `deployment` branch to update `envs/dev/values.yaml`.
+    - **PR Creation**: Directly commits the dev update to `deployment` and opens a **Staging Pull Request** (base: `deployment`, head: `promote-dev-to-stage`).
+3.  **Workflow: `Promote to Production`**: Triggered by merged PRs on the `deployment` branch. It syncs `stage` to `prod` within the same branch and opens a **Production Pull Request**.
+
+---
+
+## 🔄 The Full Workflow
 
 ```mermaid
 graph TD
     subgraph "main branch"
-    A[Commit to main] --> B{Build & Push}
-    B -- app/ --> C[Docker Image]
-    B -- helm/ --> D[OCI Helm Chart]
+    A[Commit to main] --> B{Path Filter}
+    B -- app/ --> C[Release Image]
+    B -- helm/ --> D[Release Chart]
     end
 
     C & D --> E[Update envs/dev]
@@ -39,41 +63,31 @@ graph TD
     end
 ```
 
-### 1. Automated Release (`main` -> `deployment`)
-When a change is pushed to `main`, the **Release** workflow:
-1.  Calculates semantic versions for the App and/or Chart.
-2.  Builds and pushes artifacts to GHCR.
-3.  **Safety Check**: If any build fails, the process stops immediately.
-4.  **Sync**: The workflow checkouts the `deployment` branch, updates `envs/dev/values.yaml`, and commits directly.
-5.  **Staging PR**: Automatically opens a PR from `promote-dev-to-stage` to `deployment`.
+---
 
-### 2. Environment Promotion (within `deployment`)
-Merging a promotion PR on the `deployment` branch triggers the **Promote to Production** workflow:
-1.  Detects changes in `envs/stage/values.yaml`.
-2.  Syncs the versions to `envs/prod/values.yaml`.
-3.  Opens a PR for the final Production approval.
+## 📋 Assumptions
+
+### Explicit Assumptions
+- **Conventional Commits**: The release logic *only* triggers on `feat` or `fix` prefixes.
+- **GHCR**: We assume the GitHub Container Registry is used for both Docker images and Helm charts.
+- **Permissions**: The `GITHUB_TOKEN` must have "Read and write permissions" and "Allow GitHub Actions to create and approve pull requests" enabled in repository settings.
+
+### Implicit Assumptions
+- **Separation of Concerns**: The `main` branch stays clean of environment version noise.
+- **Atomic Promotion**: Environment updates are promoted stage-by-stage via PR approval.
+- **Manual Gates**: While `dev` is auto-updated, `stage` and `prod` require a human to merge the PR, acting as a manual approval gate.
 
 ---
 
-## 🚀 Key Features
+## ⚖️ Advantages & Drawbacks
 
-- **Isolation**: Environment noise (version bumps) never touches the `main` branch code history.
-- **Build Integrity**: Deployments to `dev` and promotions to `stage` are blocked if Docker or Helm builds fail.
-- **Atomic Promotions**: Supports independent or simultaneous updates of the Application and the Helm Chart.
-- **Pull Request Gates**: `stage` and `prod` deployments require manual PR approval, serving as human-in-the-loop gates.
+### Advantages
+- **Clean Main Branch**: Source history is not cluttered with "chore: update version" commits.
+- **Traceability**: Environment state is strictly tracked in the `deployment` branch history.
+- **Safety**: Build failures prevent downstream environment updates.
+- **Simplicity**: No external GitOps tools required for state management.
 
----
-
-## 🛠️ Usage for Developers
-
-1.  **App Change**: Prefix your commit with `feat(app):` or `fix(app):`.
-2.  **Helm Change**: Prefix your commit with `feat(helm):` or `fix(helm):`.
-3.  **Promotion**: Navigate to the `deployment` branch on GitHub to find and merge the automated PRs.
-
----
-
-## 📋 Repository Configuration Requirements
-
-To function correctly, the following **GitHub Actions Permissions** are required (**Settings > Actions > General**):
-- **Workflow permissions**: Read and write permissions.
-- **Allow GitHub Actions to create and approve pull requests**: Checked.
+### Drawbacks
+- **Branch Management**: Requires managing two long-lived branches (`main` and `deployment`).
+- **PR Noise**: Every minor change in `main` initiates a cascading PR chain on the `deployment` branch.
+- **Context Switching**: Developers must switch to the `deployment` branch to review/merge promotions.
