@@ -1,4 +1,4 @@
-# Scenario 2 update
+# Scenario 3 update
 image:
   repository: ghcr.io/ps-occrp/ps-demo-all-in-one-branch
   tag: "latest"
