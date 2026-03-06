@@ -144,8 +144,11 @@ jobs:
           helm push ps-demo-all-in-one-branch-${{ needs.release-helm.outputs.new_release_version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
 
   deploy-dev-and-promote-stage:
-    needs: [release-app, build-app, release-helm, build-helm]
-    if: always() && (needs.release-app.result == 'success' || needs.release-helm.result == 'success')
+    needs: [filter, release-app, build-app, release-helm, build-helm]
+    if: |
+      (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') &&
+      (needs.build-helm.result == 'success' || needs.build-helm.result == 'skipped') &&
+      (needs.build-app.result == 'success' || needs.build-helm.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout deployment branch
