@@ -2,4 +2,4 @@
 # envs/dev/values.yaml
 image:
   tag: "1.2.0"
-chartVersion: "1.0.0"
+chartVersion: "1.1.0"
