@@ -1,5 +1,5 @@
 # Managed by PR from dev
 # envs/stage/values.yaml
 image:
-  tag: "1.0.0"
+  tag: "1.1.0"
 chartVersion: "1.5.0"
