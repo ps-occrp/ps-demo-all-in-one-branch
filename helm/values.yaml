@@ -1,0 +1,9 @@
+# Trigger Helm Release v7
+image:
+  repository: ghcr.io/ps-occrp/ps-demo-all-in-one
+  tag: "latest"
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 80
+replicaCount: 1
