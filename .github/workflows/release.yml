@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      helm: ${{ steps.filter.outputs.helm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            app:
+              - 'app/**'
+            helm:
+              - 'helm/**'
+
+  release-app:
+    needs: filter
+    if: needs.filter.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Semantic Release App
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
+            @semantic-release/github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-app:
+    needs: [filter, release-app]
+    if: needs.release-app.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: true
+          build-args: |
+            APP_VERSION=${{ needs.release-app.outputs.new_release_version }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ps-demo-all-in-one:${{ needs.release-app.outputs.new_release_version }}
+            ghcr.io/${{ github.repository_owner }}/ps-demo-all-in-one:latest
+
+  release-helm:
+    needs: filter
+    if: needs.filter.outputs.helm == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Semantic Release Helm
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          tag_format: helm-v${version}
+          extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
+            @semantic-release/github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-helm:
+    needs: [filter, release-helm]
+    if: needs.release-helm.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Login to GHCR for Helm
+        run: echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Update owner and package Helm chart
+        run: |
+          sed -i "s|ghcr.io/ps-occrp/|ghcr.io/${{ github.repository_owner }}/|g" helm/values.yaml
+          helm package helm --version ${{ needs.release-helm.outputs.new_release_version }} --app-version ${{ needs.release-helm.outputs.new_release_version }}
+          helm push ps-demo-all-in-one-${{ needs.release-helm.outputs.new_release_version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+  deploy-dev-and-promote-stage:
+    needs: [release-app, build-app, release-helm, build-helm]
+    if: always() && (needs.release-app.result == 'success' || needs.release-helm.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment branch
+        uses: actions/checkout@v4
+        with:
+          ref: deployment
+
+      - name: Update versions in dev
+        run: |
+          if [ "${{ needs.release-app.outputs.new_release_published }}" == "true" ]; then
+            sed -i 's/tag: .*/tag: "${{ needs.release-app.outputs.new_release_version }}"/' envs/dev/values.yaml
+          fi
+          if [ "${{ needs.release-helm.outputs.new_release_published }}" == "true" ]; then
+            sed -i 's/chartVersion: .*/chartVersion: "${{ needs.release-helm.outputs.new_release_version }}"/' envs/dev/values.yaml
+          fi
+
+      - name: Commit changes to dev
+        uses: EndBug/add-and-commit@v9
+        with:
+          author_name: GitHub Action
+          author_email: action@github.com
+          message: "chore(dev): update versions"
+          add: "envs/dev/values.yaml"
+          branch: deployment
+
+      - name: Sync staging with dev
+        run: |
+          cp envs/dev/values.yaml envs/stage/values.yaml
+          sed -i 's/# envs\/dev\/values.yaml/# envs\/stage\/values.yaml/' envs/stage/values.yaml
+          sed -i 's/# Managed by CI/# Managed by PR from dev/' envs/stage/values.yaml
+
+      - name: Create Pull Request to Staging
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(stage): promote versions"
+          title: "Promote to Staging: App ${{ needs.release-app.outputs.new_release_version || 'N/A' }} / Helm ${{ needs.release-helm.outputs.new_release_version || 'N/A' }}"
+          body: |
+            ## Environment Promotion: Dev -> Stage
+            - **App Version:** `${{ needs.release-app.outputs.new_release_version || 'No Change' }}`
+            - **Helm Chart Version:** `${{ needs.release-helm.outputs.new_release_version || 'No Change' }}`
+            
+            This PR was automatically generated by the Release workflow.
+          branch: "promote-dev-to-stage"
+          base: "deployment"
+          delete-branch: true
