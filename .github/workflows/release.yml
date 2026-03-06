@@ -87,8 +87,8 @@ jobs:
           build-args: |
             APP_VERSION=${{ needs.release-app.outputs.new_release_version }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/ps-demo-all-in-one:${{ needs.release-app.outputs.new_release_version }}
-            ghcr.io/${{ github.repository_owner }}/ps-demo-all-in-one:latest
+            ghcr.io/${{ github.repository_owner }}/ps-demo-all-in-one-branch:${{ needs.release-app.outputs.new_release_version }}
+            ghcr.io/${{ github.repository_owner }}/ps-demo-all-in-one-branch:latest
 
   release-helm:
     needs: filter
@@ -141,7 +141,7 @@ jobs:
         run: |
           sed -i "s|ghcr.io/ps-occrp/|ghcr.io/${{ github.repository_owner }}/|g" helm/values.yaml
           helm package helm --version ${{ needs.release-helm.outputs.new_release_version }} --app-version ${{ needs.release-helm.outputs.new_release_version }}
-          helm push ps-demo-all-in-one-${{ needs.release-helm.outputs.new_release_version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+          helm push ps-demo-all-in-one-branch-${{ needs.release-helm.outputs.new_release_version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
 
   deploy-dev-and-promote-stage:
     needs: [release-app, build-app, release-helm, build-helm]
