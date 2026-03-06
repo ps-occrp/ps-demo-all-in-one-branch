@@ -155,7 +155,40 @@ git commit -m "ci: update promote workflow for deployment branch"
 
 ---
 
-### Task 6: Final Verification
+### Task 7: Implement Build Safety Checks
 
-**Step 1: Check branch structure**
-Run `git branch` and `ls -R` on both branches to ensure files are in correct locations.
+**Files:**
+- Modify: `.github/workflows/release.yml`
+
+**Step 1: Update job conditions**
+Ensure `deploy-dev-and-promote-stage` only runs if builds are successful or skipped, and never if they fail.
+
+```yaml
+    if: |
+      (needs.build-app.result == 'success' || needs.build-app.result == 'skipped') &&
+      (needs.build-helm.result == 'success' || needs.build-helm.result == 'skipped') &&
+      (needs.build-app.result == 'success' || needs.build-helm.result == 'success')
+```
+
+---
+
+### Task 8: End-to-End Verification Scenarios
+
+**Step 1: Scenario 1 - App Only**
+- Push `feat(app)` change.
+- Verify App built, version bumped in `envs/dev`, and Staging PR created with App-only change.
+
+**Step 2: Scenario 2 - App and Helm**
+- Push `feat(app)` and `feat(helm)` changes.
+- Verify both built and both versions updated in PR.
+
+**Step 3: Scenario 3 - Helm Only**
+- Push `feat(helm)` change.
+- Verify App build skipped, Chart built and updated in Staging PR.
+
+---
+
+### Task 9: Final Documentation
+
+**Step 1: Update README.md**
+Document the dual-branch architecture, branching rules, and promotion triggers.
